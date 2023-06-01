@@ -4,8 +4,8 @@ from brownie import (
     interface,
     accounts,
     ChildChainGaugeInjector,
-    Contract
-
+    Contract,
+    injectorFactory
 )
 from dotmap import DotMap
 import pytest
@@ -92,21 +92,31 @@ def token_list():
     return TOKEN_LIST
 
 @pytest.fixture(scope="module")
-def deploy(deployer, admin, upkeep_caller, authorizer_adaptor, streamer, gauge, gauge2, get_rewards, token, authorizer_entrypoint,token_list):
+def factory(deployer, upkeep_caller, token):
+    factory = injectorFactory.deploy(
+        {'from':deployer}
+    )
+    return factory
+
+@pytest.fixture(scope="module")
+def deploy(deployer, admin, upkeep_caller, authorizer_adaptor, streamer, gauge, gauge2, get_rewards, token, authorizer_entrypoint,token_list, factory):
     """
     Deploys, vault and test strategy, mock token and wires them up.
     """
 
     # token.transfer(admin, 10000*10**18, {"from": ARBI_LDO_WHALE})
 
-    injector = ChildChainGaugeInjector.deploy(
+    tx = factory.createNewInjector(
         upkeep_caller,
         60*5, #minWaitPeriodSeconds
         token.address,
+        admin,
         {"from": deployer}
     )
+    injector = Contract.from_abi("injector",tx.return_value, ChildChainGaugeInjector.abi)
     print(token.balanceOf(deployer))
-    injector.transferOwnership(admin, {"from": deployer})
+    # injector.transferOwnership(admin, {"from": deployer})
+
     injector.acceptOwnership({"from": admin})
 
 
