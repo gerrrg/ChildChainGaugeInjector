@@ -13,30 +13,33 @@ import "interfaces/balancer/IChildChainGauge.sol";
 /**
  * @title The ChildChainGaugeInjector Contract
  * @author 0xtritium.eth + master coder Mike B
- * @notice This contract is a chainlink automation compatible interface to automate regular payment of non-BAL rewards to a child chain gauge.
- * @notice This contract is meant to run/manage a single token.  This is almost always the case for a DAO trying to use such a thing.
+ * @notice This contract is a ChainLink automation compatible interface to automate regular payment of non-BAL emissions to a child chain gauge.
+ * @notice This contract is meant to run/manage a single token. This is almost always the case for a DAO trying to use such a thing.
  * @notice The configuration is rewritten each time it is loaded.
+ * ^ what is this supposed to mean?
  * @notice This contract will only function if it is configured as the distributor for a token/gauge it is operating on.
- * @notice The contract is meant to hold token balances, and works on a schedule set using setRecipientList.  The schedule defines an amount per round and number of rounds per gauge.
+ * @notice The contract is meant to hold token balances and works on a schedule set using setRecipientList. The schedule defines an amount per round and number of rounds per gauge.
  * @notice This contract is Ownable and has lots of sweep functionality to allow the owner to work with the contract or get tokens out should there be a problem.
+ * ^ seems worrying at first read, but I guess I'll see the implications as I get further into the contract
  * see https://docs.chain.link/chainlink-automation/utility-contracts/
  */
 
 
 contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleInterface {
-    event gasTokenWithdrawn(uint256 amountWithdrawn, address recipient);
+    // GERG: events are ProperCase
+    event GasTokenWithdrawn(uint256 amountWithdrawn, address recipient);
     event KeeperRegistryAddressUpdated(address oldAddress, address newAddress);
     event MinWaitPeriodUpdated(uint256 oldMinWaitPeriod, uint256 newMinWaitPeriod);
     event ERC20Swept(address indexed token, address recipient, uint256 amount);
-    event injectionFailed(address gauge);
-    event emissionsInjection(address gauge, uint256 amount);
-    event forwardedCall(address targetContract);
-    event setHandlingToken(address token);
+    event InjectionFailed(address gauge);
+    event EmissionsInjection(address gauge, uint256 amount);
+    event forwardedCall(address targetContract); // GERG: this event is not used.
+    event SetHandlingToken(address token);
 
-
+    // GERG: please remove stuff like this before we get to the point of review.
     // events below here are debugging and should be removed
-    event wrongCaller(address sender, address registry);
-    event performedUpkeep(address[] needsFunding);
+    event WrongCaller(address sender, address registry);
+    event PerformedUpkeep(address[] needsFunding);
 
     error InvalidGaugeList();
     error OnlyKeeperRegistry(address sender);
@@ -44,6 +47,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     error ZeroAddress();
 
     struct Target {
+        // GERG: if you switch the order of isActive and amountPerPeriod in this struct, you'll save on storage w/ tighter variable packing
         bool isActive;
         uint256 amountPerPeriod;
         uint8 maxPeriods;
@@ -51,13 +55,13 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         uint56 lastInjectionTimeStamp; // enough space for 2 trillion years
     }
 
-
     address private s_keeperRegistryAddress;
     uint256 private s_minWaitPeriodSeconds;
     address[] private s_gaugeList;
     mapping(address => Target) internal s_targets;
     address private s_injectTokenAddress;
 
+    // GERG: fix indentations here
     /**
   * @param keeperRegistryAddress The address of the keeper registry contract
    * @param minWaitPeriodSeconds The minimum wait period for address between funding (for security)
@@ -70,13 +74,12 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         setInjectTokenAddress(injectTokenAddress);
     }
 
-
-
+    // GERG: fix indentations here
     /**
      * @notice Sets the list of addresses to watch and their funding parameters
-   * @param gaugeAddresses the list of addresses to watch
-   * @param amountsPerPeriod the minimum balances for each address
-   * @param maxPeriods the amount to top up each address
+   * @param gaugeAddresses the list of addresses to watch // GERG: what does it mean to watch an address?
+   * @param amountsPerPeriod the minimum balances for each address // GERG: the variable name and comment don't seem to line up well. What does this var actually mean?
+   * @param maxPeriods the amount to top up each address // GERG: the variable name and comment don't seem to line up well. What does this var actually mean?
    */
     function setRecipientList(
         address[] calldata gaugeAddresses,
@@ -91,6 +94,8 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
             s_targets[oldGaugeList[idx]].isActive = false;
         }
         for (uint256 idx = 0; idx < gaugeAddresses.length; idx++) {
+            // GERG: this should functionally achieve a duplicate check, but it compares against storage each time.
+            //       It would probably be cheaper to compare all elements in a memory/calldata array in a nested for loop
             if (s_targets[gaugeAddresses[idx]].isActive) {
                 revert DuplicateAddress(gaugeAddresses[idx]);
             }
@@ -111,8 +116,8 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         s_gaugeList = gaugeAddresses;
     }
 
-
-    function setValidatedRecipientList(address[] calldata gaugeAddresses,
+    function setValidatedRecipientList(
+        address[] calldata gaugeAddresses,
         uint256[] calldata amountsPerPeriod,
         uint8[] calldata maxPeriods
     ) external onlyOwner {
@@ -133,19 +138,25 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     }
 
     function checkBalancesMatch() public view returns (bool){
-        // iterates through all gauges to make sure theres enough tokens in the contract to fulfill all scheduled tasks
+        // iterates through all gauges to make sure there are enough tokens in the contract to fulfill all scheduled tasks
         // go through all gauges to see how many tokens are needed
         // maxperiods - periodnumber * amountPerPeriod ==  token.balanceOf(address(this))
+        // GERG: ^ this equation is wrong due to order of operations.
 
         address[] memory gaugeList = s_gaugeList;
         uint256 totalDue;
         for (uint256 idx = 0; idx < gaugeList.length; idx++) {
             Target memory target = s_targets[gaugeList[idx]];
+            // GERG: I'm curious to see what happens once periodNumber > maxPeriods. I don't think it'll be good. Is it possible to get in that state?
             totalDue = totalDue + (target.maxPeriods - target.periodNumber) * target.amountPerPeriod;
         }
+        // GERG: exact equality here is unwise. Someone could easily make this fail by dusting with 1 wei of s_injectTokenAddress
+        //       ... and no, I don't think "but the contract has admin sweep control" is a good response to this
+        //       ... also what if it ends up pre-loaded for a few of the periods?
         return totalDue == IERC20(s_injectTokenAddress).balanceOf(address(this));
     }
-
+    
+    // GERG: fix indentations here
     /**
      * @notice Gets a list of addresses that are ready to inject
      * @notice This is done by checking if the current period has ended, and should inject new funds directly after the end of each period.
@@ -155,7 +166,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         address[] memory gaugeList = s_gaugeList;
         address[] memory ready = new address[](gaugeList.length);
         address tokenAddress = s_injectTokenAddress;
-        uint256 count = 0;
+        uint256 count = 0; // GERG: unnecessary initialization to zero
         uint256 minWaitPeriod = s_minWaitPeriodSeconds;
         uint256 balance = IERC20(tokenAddress).balanceOf(address(this));
         Target memory target;
@@ -163,11 +174,12 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
             target = s_targets[gaugeList[idx]];
             IChildChainGauge gauge = IChildChainGauge(gaugeList[idx]);
 
+            // GERG: cache gauge.reward_data(tokenAddress) since you use it here for .period_finish and below for .distributor
             uint256 period_finish = gauge.reward_data(tokenAddress).period_finish;
 
             if (
                 target.lastInjectionTimeStamp + minWaitPeriod <= block.timestamp &&
-                (period_finish <= block.timestamp) &&
+                (period_finish <= block.timestamp) && // GERG: how come only this check gets parentheses?
                 balance >= target.amountPerPeriod &&
                 target.periodNumber < target.maxPeriods &&
                 gauge.reward_data(tokenAddress).distributor == address(this)
@@ -177,6 +189,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
                 balance -= target.amountPerPeriod;
             }
         }
+        // GERG: generally good practice to explain any assembly since it is less obvious than solidity code to many readers
         if (count != gaugeList.length) {
             assembly {
                 mstore(ready, count)
@@ -185,6 +198,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         return ready;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Injects funds into the gauges provided
    * @param ready the list of gauges to fund (addresses must be pre-approved)
@@ -211,25 +225,31 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
 
                 SafeERC20.safeApprove(token, gaugeList[idx], target.amountPerPeriod);
 
+                // GERG: why cast address(token) when you already have tokenAddress?
+                // GERG: why cast uint256(target.amountPerPeriod) when it is defined as a uint256?
                 try gauge.deposit_reward_token(address(token), uint256(target.amountPerPeriod)) {
                     s_targets[ready[idx]].lastInjectionTimeStamp = uint56(block.timestamp);
                     s_targets[ready[idx]].periodNumber += 1;
-                    emit emissionsInjection(ready[idx], target.amountPerPeriod);
+                    emit EmissionsInjection(ready[idx], target.amountPerPeriod);
                 } catch {
-                    emit injectionFailed(ready[idx]);
+                    // GERG: events are not emitted when transactions revert. Use an error instead.
+                    emit InjectionFailed(ready[idx]);
                     revert("Failed to call deposit_reward_tokens");
                 }
             }
         }
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Get list of addresses that are ready for new token injections and return keeper-compatible payload
    * @param performData required by the chainlink interface but not used in this case.
    * @return upkeepNeeded signals if upkeep is needed
    * @return performData is an abi encoded list of addresses that need funds
    */
+   // GERG: why is this whenNotPaused? Wouldn't it be more graceful to return with `upkeepNeeded = false` if it's paused?
     function checkUpkeep(bytes calldata)
+    // GERG: fix indentations here
     external
     view
     override
@@ -242,41 +262,50 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         return (upkeepNeeded, performData);
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Called by keeper to send funds to underfunded addresses
    * @param performData The abi encoded list of addresses to fund
    */
     function performUpkeep(bytes calldata performData) external override onlyKeeperRegistry whenNotPaused {
         address[] memory needsFunding = abi.decode(performData, (address[]));
-        emit performedUpkeep(needsFunding);
+        // GERG: emit after the thing has been done
+        emit PerformedUpkeep(needsFunding);
         injectFunds(needsFunding);
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Withdraws the contract balance
    * @param amount The amount of eth (in wei) to withdraw
    */
+   // GERG: warning -- high level of power for owner
+   // GERG: I personally would call this withdrawNativeAsset (and similarly rename the event), but that's ultimately up to you
     function withdrawGasToken(uint256 amount) external onlyOwner {
         address payable recipient = payable(owner());
         if (recipient == address(0)) {
             revert ZeroAddress();
         }
-        emit gasTokenWithdrawn(amount, owner());
+        // GERG: emit after the thing has been done
+        emit GasTokenWithdrawn(amount, owner()); // GERG: don't query owner() twice -- two storage reads. You already have recipient.
         recipient.transfer(amount);
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Sweep the full contract's balance for a given ERC-20 token
    * @param token The ERC-20 token which needs to be swept
    */
+   // GERG: warning -- high level of power for owner
     function sweep(address token) external onlyOwner {
         uint256 balance = IERC20(token).balanceOf(address(this));
+        // GERG: cache owner = owner() locally. Calling it as written here does 2 storage reads
+        // GERG: emit after the thing has been done
         emit ERC20Swept(token, owner(), balance);
         SafeERC20.safeTransfer(IERC20(token), owner(), balance);
     }
 
-
-
+    // GERG: fix indentations here
     /**
      * @notice Set distributor from the injector back to the owner.
      * @notice You will have to call set_reward_distributor back to the injector FROM the current distributor if you wish to continue using the injector
@@ -288,10 +317,11 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         gaugeContract.set_reward_distributor(reward_token, owner());
     }
 
+    // GERG: fix indentations here
     /**
  * @notice Manually deposit an amount of rewards to the gauge
      * @notice
-   * @param gauge The Gauge to set distributor to injector owner
+   * @param gauge The Gauge to set distributor to injector owner // GERG: this comment is incorrect
    * @param reward_token Reward token you are seeding
    * @param amount Amount to deposit
    */
@@ -300,25 +330,30 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         IERC20 token = IERC20(reward_token);
         SafeERC20.safeApprove(token, gauge, amount);
         gaugeContract.deposit_reward_token(reward_token, amount);
-        emit emissionsInjection(gauge, amount);
+        emit EmissionsInjection(gauge, amount);
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Sets the keeper registry address
    */
     function setKeeperRegistryAddress(address keeperRegistryAddress) public onlyOwner {
+        // GERG: emit after the thing has been done
         emit KeeperRegistryAddressUpdated(s_keeperRegistryAddress, keeperRegistryAddress);
         s_keeperRegistryAddress = keeperRegistryAddress;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Sets the minimum wait period (in seconds) for addresses between injections
    */
     function setMinWaitPeriodSeconds(uint256 period) public onlyOwner {
+        // GERG: emit after the thing has been done
         emit MinWaitPeriodUpdated(s_minWaitPeriodSeconds, period);
         s_minWaitPeriodSeconds = period;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Gets the keeper registry address
    */
@@ -326,6 +361,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         return s_keeperRegistryAddress;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Gets the minimum wait period
    */
@@ -333,33 +369,40 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         return s_minWaitPeriodSeconds;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Gets the list of addresses on the in the current configuration.
    */
+    // GERG: why is this called watchlist when it's internally called gaugelist?
     function getWatchList() external view returns (address[] memory) {
         return s_gaugeList;
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Sets the address of the ERC20 token this contract should handle
    */
     function setInjectTokenAddress(address ERC20token) public onlyOwner {
-        emit setHandlingToken(ERC20token);
+        // GERG: emit after the thing has been done
+        emit SetHandlingToken(ERC20token);
         s_injectTokenAddress = ERC20token;
 
     }
+    // GERG: fix indentations here
     /**
      * @notice Gets the token this injector is operating on
    */
-    function getInjectTokenAddress() external view returns (address ERC20token){
+    function getInjectTokenAddress() external view returns (address ERC20token) { //return arg name unnecessary here
         return s_injectTokenAddress;
     }
+    // GERG: fix indentations here
     /**
      * @notice Gets configuration information for an address on the gaugelist
    */
+    // GERG: function name is very unclear here. What is an "account" to a naive user? Why not just call them gauges?
     function getAccountInfo(address targetAddress)
-    external
-    view
+        external
+        view
     returns (
         bool isActive,
         uint256 amountPerPeriod,
@@ -372,6 +415,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         return (target.isActive, target.amountPerPeriod, target.maxPeriods, target.periodNumber, target.lastInjectionTimeStamp);
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Pauses the contract, which prevents executing performUpkeep
    */
@@ -379,6 +423,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         _pause();
     }
 
+    // GERG: fix indentations here
     /**
      * @notice Unpauses the contract
    */
@@ -386,9 +431,11 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         _unpause();
     }
 
+    // GERG: define modifiers near the top
     modifier onlyKeeperRegistry() {
         if (msg.sender != s_keeperRegistryAddress) {
-            emit wrongCaller(msg.sender, s_keeperRegistryAddress);
+            // GERG: events are not emitted when transactions revert. Use an error instead.
+            emit WrongCaller(msg.sender, s_keeperRegistryAddress);
             revert OnlyKeeperRegistry(msg.sender);
         }
         _;
