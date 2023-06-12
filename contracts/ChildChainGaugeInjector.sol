@@ -33,7 +33,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     event ERC20Swept(address indexed token, address recipient, uint256 amount);
     event InjectionFailed(address gauge);
     event EmissionsInjection(address gauge, uint256 amount);
-    event forwardedCall(address targetContract); // GERG: this event is not used.
+    event ForwardedCall(address targetContract); // GERG: this event is not used.
     event SetHandlingToken(address token);
 
     // GERG: please remove stuff like this before we get to the point of review.
@@ -116,6 +116,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         s_gaugeList = gaugeAddresses;
     }
 
+    // GERG: natspec
     function setValidatedRecipientList(
         address[] calldata gaugeAddresses,
         uint256[] calldata amountsPerPeriod,
@@ -151,7 +152,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
             totalDue = totalDue + (target.maxPeriods - target.periodNumber) * target.amountPerPeriod;
         }
         // GERG: exact equality here is unwise. Someone could easily make this fail by dusting with 1 wei of s_injectTokenAddress
-        //       ... and no, I don't think "but the contract has admin sweep control" is a good response to this
+        //       ... and no, I don't think "but the contract has admin sweep control" is a good fix for this
         //       ... also what if it ends up pre-loaded for a few of the periods?
         return totalDue == IERC20(s_injectTokenAddress).balanceOf(address(this));
     }
@@ -189,7 +190,8 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
                 balance -= target.amountPerPeriod;
             }
         }
-        // GERG: generally good practice to explain any assembly since it is less obvious than solidity code to many readers
+        // GERG: generally good practice to explain any assembly since it is less obvious than solidity code to many readers, or to put it
+        //       in its own function that has a good name ie `shortenArrayWithoutFreeingMemory(ready)`
         if (count != gaugeList.length) {
             assembly {
                 mstore(ready, count)
@@ -203,6 +205,13 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
      * @notice Injects funds into the gauges provided
    * @param ready the list of gauges to fund (addresses must be pre-approved)
    */
+   // GERG: Should this actually be public? performUpkeep is onlyKeeperRegistry and calls this.
+   //       Any address can be directly passed as "ready" whether it is ready or not, or even a gauge. This can result in failures.
+   // * _injectFunds internal whenNotPaused (address[] memory ready)
+   // * injectFundsOwner external onlyOwner {_injectFunds(...)}
+   // * performUpkeep external onlyKeepers { ...; _injectFunds(...); ...;}
+   //
+
     function injectFunds(address[] memory ready) public whenNotPaused {
         uint256 minWaitPeriodSeconds = s_minWaitPeriodSeconds;
         address tokenAddress = s_injectTokenAddress;
@@ -247,7 +256,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
    * @return upkeepNeeded signals if upkeep is needed
    * @return performData is an abi encoded list of addresses that need funds
    */
-   // GERG: why is this whenNotPaused? Wouldn't it be more graceful to return with `upkeepNeeded = false` if it's paused?
+   // GERG: why is this whenNotPaused? Wouldn't it be more graceful to return with `upkeepNeeded=false, performData=bytes(0)` if it's paused?
     function checkUpkeep(bytes calldata)
     // GERG: fix indentations here
     external
@@ -267,6 +276,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
      * @notice Called by keeper to send funds to underfunded addresses
    * @param performData The abi encoded list of addresses to fund
    */
+   // GERG: I'm not intimately familiar with chainlink keepers. Is there nothing enforcing that checkUpkeep's performData == performUpkeep's performData? A keeper could pass bad data
     function performUpkeep(bytes calldata performData) external override onlyKeeperRegistry whenNotPaused {
         address[] memory needsFunding = abi.decode(performData, (address[]));
         // GERG: emit after the thing has been done
@@ -314,17 +324,19 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
    */
     function setDistributorToOwner(address gauge, address reward_token) external onlyOwner {
         IChildChainGauge gaugeContract = IChildChainGauge(gauge);
+        // GERG: why store ^? You can just use IChildChainGauge(gauge).set_reward_distributor(...); This is not the only instance of this.
         gaugeContract.set_reward_distributor(reward_token, owner());
     }
 
     // GERG: fix indentations here
     /**
  * @notice Manually deposit an amount of rewards to the gauge
-     * @notice
+     * @notice // GERG: no notice
    * @param gauge The Gauge to set distributor to injector owner // GERG: this comment is incorrect
    * @param reward_token Reward token you are seeding
    * @param amount Amount to deposit
    */
+   // GERG: should this function change the lastInjectionTimestamp or other vars like that?
     function manualDeposit(address gauge, address reward_token, uint256 amount) external onlyOwner {
         IChildChainGauge gaugeContract = IChildChainGauge(gauge);
         IERC20 token = IERC20(reward_token);
@@ -340,6 +352,8 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     function setKeeperRegistryAddress(address keeperRegistryAddress) public onlyOwner {
         // GERG: emit after the thing has been done
         emit KeeperRegistryAddressUpdated(s_keeperRegistryAddress, keeperRegistryAddress);
+        // GERG: is there some known call that you can perform against the keeper registry so that you
+        //       can confirm whether this is actually the correct address or not?
         s_keeperRegistryAddress = keeperRegistryAddress;
     }
 
