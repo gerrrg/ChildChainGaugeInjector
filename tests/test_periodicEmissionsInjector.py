@@ -243,11 +243,11 @@ def test_validatedSuccess(admin, injector, gauge, token, gauge2):
     injector.setRecipientList([], [], [], {'from': admin})
     injector.setValidatedRecipientList([gauge,gauge2],[50*10**18,150*10**18],[4,5],{'from':admin})
     assert injector.checkBalancesMatch()
-    injector.injectFunds([gauge,gauge2])
+    injector.injectFunds([gauge,gauge2],{'from':admin})
     # sleep 8 days
     chain.sleep(60*60*24*8)
     chain.mine()
-    injector.injectFunds([gauge, gauge2])
+    injector.injectFunds([gauge, gauge2],{'from':admin})
     assert injector.checkBalancesMatch()
 
 # tests to make sure checkUpkeepBalance (which gets called on setValidatedRecipient)

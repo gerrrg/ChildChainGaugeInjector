@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.6;
+pragma solidity ^0.8.18;
 
 import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
@@ -29,7 +29,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     event MinWaitPeriodUpdated(uint256 oldMinWaitPeriod, uint256 newMinWaitPeriod);
     event ERC20Swept(address indexed token, address recipient, uint256 amount);
     event injectionFailed(address gauge);
-    event emissionsInjection(address gauge, uint256 amount);
+    event emissionsInjection(address gauge, address token, uint256 amount);
     event forwardedCall(address targetContract);
     event setHandlingToken(address token);
 
@@ -64,7 +64,8 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
    * @param injectTokenAddress The ERC20 token this contract should mange
    */
     constructor(address keeperRegistryAddress, uint256 minWaitPeriodSeconds, address injectTokenAddress)
-    ConfirmedOwner(msg.sender) {
+    ConfirmedOwner(msg.sender)
+    {
         setKeeperRegistryAddress(keeperRegistryAddress);
         setMinWaitPeriodSeconds(minWaitPeriodSeconds);
         setInjectTokenAddress(injectTokenAddress);
@@ -214,7 +215,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
                 try gauge.deposit_reward_token(address(token), uint256(target.amountPerPeriod)) {
                     s_targets[ready[idx]].lastInjectionTimeStamp = uint56(block.timestamp);
                     s_targets[ready[idx]].periodNumber += 1;
-                    emit emissionsInjection(ready[idx], target.amountPerPeriod);
+                    emit emissionsInjection(ready[idx], address(token), target.amountPerPeriod);
                 } catch {
                     emit injectionFailed(ready[idx]);
                     revert("Failed to call deposit_reward_tokens");
@@ -300,7 +301,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         IERC20 token = IERC20(reward_token);
         SafeERC20.safeApprove(token, gauge, amount);
         gaugeContract.deposit_reward_token(reward_token, amount);
-        emit emissionsInjection(gauge, amount);
+        emit emissionsInjection(gauge, reward_token, amount);
     }
 
     /**
