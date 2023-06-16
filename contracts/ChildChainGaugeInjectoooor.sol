@@ -32,6 +32,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
     event SetHandlingToken(address token);
     event PerformedUpkeep(address[] needsFunding);
 
+
     error InvalidGaugeList(string message);
     error OnlyKeeperRegistry(address sender);
     error DuplicateAddress(address duplicate);
@@ -145,7 +146,7 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
         uint256 totalDue;
         for (uint256 idx = 0; idx < gaugeList.length; idx++) {
             Target memory target = s_targets[gaugeList[idx]];
-            totalDue += (target.maxPeriods - (target.periodNumber + 1)) * target.amountPerPeriod;
+            totalDue += (target.maxPeriods - (target.periodNumber)) * target.amountPerPeriod;
         }
         return totalDue == IERC20(s_injectTokenAddress).balanceOf(address(this));
     }
@@ -408,6 +409,9 @@ contract ChildChainGaugeInjector is ConfirmedOwner, Pausable, KeeperCompatibleIn
    */
     function revertOnDuplicate(address[] memory list) internal pure {
         uint256 length = list.length;
+        if(length == 0) {
+           return;
+        }
         for (uint256 i = 0; i < length - 1; i++) {
             for (uint256 j = i + 1; j < length; j++) {
                 if (list[i] == list[j]) {

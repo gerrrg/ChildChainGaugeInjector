@@ -242,13 +242,13 @@ def test_validatedSuccess(admin, injector, gauge, token, gauge2):
 
     injector.setRecipientList([], [], [], {'from': admin})
     injector.setValidatedRecipientList([gauge,gauge2],[50*10**18,150*10**18],[4,5],{'from':admin})
-    assert injector.checkBalancesMatch()
+    assert injector.checkExactBalancesMatch({'from':admin})
     injector.injectFunds([gauge,gauge2],{'from':admin})
     # sleep 8 days
     chain.sleep(60*60*24*8)
     chain.mine()
     injector.injectFunds([gauge, gauge2],{'from':admin})
-    assert injector.checkBalancesMatch()
+    assert injector.checkExactBalancesMatch({'from':admin})
 
 # tests to make sure checkUpkeepBalance (which gets called on setValidatedRecipient)
 # returns false when sum of scheduled distributions don't add up to current balance
@@ -261,8 +261,37 @@ def test_validatedFail(admin, injector, gauge, token, gauge2):
 
     injector.setRecipientList([], [], [], {'from': admin})
 
-    with brownie.reverts("balances don't match"):
+    with brownie.reverts("balance doesn't match for supplied schedules"):
         injector.setValidatedRecipientList([gauge, gauge2], [50 * 10 ** 18, 150 * 10 ** 18], [4, 5], {'from': admin})
 
     injector.setRecipientList([gauge, gauge2], [50 * 10 ** 18, 150 * 10 ** 18], [4, 5], {'from': admin})
-    assert injector.checkBalancesMatch() == False
+    assert(injector.checkExactBalancesMatch({'from':admin}) == False)
+
+
+# add 4 gauges, ru na program, remove them, add osme that are the same,
+def test_addAndRemoveStuff(admin, injector, gauge, token, gauge2,upkeep_caller):
+    # throw all current tokens away
+    token.transfer(token.address,token.balanceOf(injector.address),{'from':injector.address})
+    assert(token.balanceOf(injector) == 0)
+    start_balance = 1100
+    token.transfer(injector.address, start_balance * 1e18, {'from': admin})
+
+
+    injector.setRecipientList([], [], [], {'from': admin})
+    chain.sleep(60*60*24*8)
+    chain.mine()
+    amt1 = 100 * 1e18
+    amt2 = 25 * 1e18
+    injector.setRecipientList([gauge,gauge2], [amt1,amt2], [3,4], {'from':admin})
+    (upkeepNeeded, performData) = injector.checkUpkeep("", {"from": upkeep_caller})
+    injector.performUpkeep(performData, {'from':upkeep_caller})
+
+    new_balance = token.balanceOf(injector)
+    assert((start_balance * 1e18 ) - new_balance == amt1 + amt2)
+    chain.sleep(60*60*24*8)
+    chain.mine()
+    injector.setRecipientList([gauge2], [amt2], [4], {'from': admin})
+    (upkeepNeeded, performData) = injector.checkUpkeep("", {"from": upkeep_caller})
+    injector.performUpkeep(performData, {'from':upkeep_caller})
+    newer_balance = token.balanceOf(injector)
+    assert(new_balance - newer_balance == amt2 )
